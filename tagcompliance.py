@@ -1,0 +1,66 @@
+from pprint import pprint
+import pandas as pd
+import boto3
+import json
+import pathlib
+import os
+from botocore.exceptions import ClientError
+
+def upload_csv_to_s3(bucket_name, folder_name, object_name, file_name):
+    """
+    Uploads a CSV file to an S3 bucket within a specific folder.
+
+    Args:
+        bucket_name (str): The name of the S3 bucket.
+        folder_name (str): The name of the folder within the S3 bucket.
+        object_name (str): The name of the object (file) in the S3 bucket.
+        file_name (str): The local file path of the CSV file to upload.
+    """
+    try:
+        s3 = boto3.client("s3", aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
+        s3.upload_file(file_name, bucket_name, os.path.join(folder_name, object_name))
+        print(f"File '{file_name}' uploaded successfully to S3 bucket '{bucket_name}' within the '{folder_name}' folder.")
+    except ClientError as e:
+        print(f"An error occurred while uploading the file to S3: {e}")
+
+# S3 bucket and folder names
+bucket_name = "${env.S3_BUCKET_NAME}"
+folder_name = "compliance"
+object_name = "taggedresources.csv"
+
+# Initialize variables
+client = boto3.client('resourcegroupstaggingapi')
+df = pd.DataFrame({'ResourceARN': [], 'Key': [], 'Value': []})
+df1 = pd.DataFrame({'ResourceARN': []})
+
+# Create a client for the Resource Groups Tagging API in the desired AWS region
+client = boto3.client('resourcegroupstaggingapi', region_name='ap-southeast-2')
+
+# Retrieve resources using pagination
+paginator = client.get_paginator('get_resources')
+pages = paginator.paginate()
+
+for page in pages:
+    resources = page['ResourceTagMappingList']
+    for resource in resources:
+        arn = resource.get('ResourceARN')
+        tags = resource.get('Tags')
+
+        if tags == []:
+            # Store untagged resources in a separate DataFrame and save as CSV
+            df1.loc[len(df.index)] = [arn]
+            df1.to_csv('Untaggedresources.csv', index=False)
+
+        for i, tags in enumerate(resource.get('Tags')):
+            if tags['Key'] == "Name":
+                # Store tagged resources with 'Name' tag in the DataFrame
+                df.loc[len(df.index)] = [arn, tags['Key'], tags['Value']]
+
+# Save the tagged resources DataFrame as a CSV file
+df.to_csv('taggedresources.csv')
+
+# Get the local file path of the CSV file
+file_name = os.path.join(pathlib.Path(__file__).parent.resolve(), "taggedresources.csv")
+
+# Upload the CSV file to S3 within the specified folder
+upload_csv_to_s3(bucket_name, folder_name, object_name, file_name)
